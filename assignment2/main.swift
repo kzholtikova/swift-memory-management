@@ -169,3 +169,84 @@ numbers2.printArray()
 print()
 
 
+
+// MARK: - Task 4 (optional): JSON Parsing. JSON strikes back
+
+extension Student {
+    func printInfo() {
+        print("""
+        ID: \(id). Name: \(name). Age: \(age). Address: \(address.street), \(address.city), \(address.postalCode).
+        \(scores.map { "\($0.key): \($0.value.map(String.init) ?? "N/A")" }.joined(separator: ", ")).
+        Has Scholarship: \(hasScholarship ? "Yes" : "No"). Graduation Year: \(graduationYear)\n
+        """)
+    }
+}
+
+enum ModelParserError: Error {
+    case parsingFailed(String)
+}
+
+class ModelParser {
+    private let url: URL
+    private var jsonData: Data = Data()
+    var students: [Student] = []
+    
+    init(from filename: String) {
+        url = URL(fileURLWithPath: #file).deletingLastPathComponent().appendingPathComponent(filename)
+    }
+    
+    func parseJSON() throws -> [Student] {
+        guard let inputStream = InputStream(url: url) else {
+            throw ModelParserError.parsingFailed("Failed to open input stream from \(url).")
+        }
+        
+        inputStream.open()
+        defer { inputStream.close() }
+        var buffer = [UInt8](repeating: 0, count: 2048)
+        
+        var isFirstChunk = true
+        while inputStream.hasBytesAvailable {
+            let bytesRead = inputStream.read(&buffer, maxLength: buffer.count)
+            if bytesRead < 0 {
+                throw ModelParserError.parsingFailed("Error reading from input stream")
+            }
+            
+            jsonData.append(buffer, count: bytesRead)
+            try processChunk(isFirstChunk)
+            isFirstChunk = false
+        }
+            
+        return students
+    }
+    
+    private func processChunk(_ isFirstChunk: Bool) throws {
+        let decoder = JSONDecoder()
+        if var chunk = String(data: jsonData, encoding: .utf8) {
+            if isFirstChunk, let arrayRange = chunk.range(of: "[{") {  // discard `{ "students": [`
+                chunk = "{" + String(chunk[arrayRange.upperBound...])
+            }
+            
+            while let studentRange = chunk.range(of: "},{") {  // read student by student
+                let studentChunk = Data((chunk[..<studentRange.lowerBound] + "}").utf8)
+                guard let student = try? decoder.decode(Student.self, from: studentChunk) else {
+                    throw ModelParserError.parsingFailed("Failed to decode JSON from \(url).")
+                }
+                
+                students.append(student)
+                print("Added student \(student.id)")
+                chunk = "{" + String(chunk[studentRange.upperBound...])
+            }
+            
+            jsonData = Data(chunk.utf8)
+        }
+    }
+}
+
+let path = "students.json"
+do {
+    generateStudentsJSON(3 * 1024 * 1024 * 1024)  // 3GB
+    let students = try ModelParser(from: path).parseJSON()
+    print("There're \(students.count) students.")
+} catch {
+    print(error)
+}
